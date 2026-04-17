@@ -63,6 +63,7 @@ OLLAMA_HOST = _normalize_ollama_host(OLLAMA_HOST_CONFIGURED)
 # Other options: llava:7b, llama3.2-vision (require more RAM)
 # Pull the model first:  ollama pull moondream
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "moondream")
+# Maximum number of video-derived images provided to the model for rating context.
 MAX_CONTEXT_IMAGES = 4
 
 app = Flask(__name__)
@@ -264,12 +265,15 @@ def _sample_evenly(items: list[str], max_count: int) -> list[str]:
 
     idxs = []
     for i in range(max_count):
-        idx = round(i * (len(items) - 1) / (max_count - 1))
+        idx = i * (len(items) - 1) // (max_count - 1)
         idxs.append(idx)
     return [items[i] for i in idxs]
 
 
-def _get_video_context(video_id: str) -> tuple[list[str], str]:
+def _get_video_context(
+    video_id: str,
+    max_images: int = MAX_CONTEXT_IMAGES,
+) -> tuple[list[str], str]:
     """
     Fetch richer metadata for a specific video and return:
       - image URLs sampled across available video images/thumbnails
@@ -294,7 +298,7 @@ def _get_video_context(video_id: str) -> tuple[list[str], str]:
         if image_url and image_url not in image_urls:
             image_urls.append(image_url)
 
-    return _sample_evenly(image_urls, max_count=MAX_CONTEXT_IMAGES), info.get("description") or ""
+    return _sample_evenly(image_urls, max_count=max_images), info.get("description") or ""
 
 
 def _rate_video(
