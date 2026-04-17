@@ -13,6 +13,7 @@ import sqlite3
 import threading
 import time
 from io import BytesIO
+from urllib.parse import urlparse, urlunparse
 
 import ollama as ollama_lib
 import requests
@@ -27,8 +28,33 @@ load_dotenv()
 # Ollama configuration (override via environment variables or .env)
 # ---------------------------------------------------------------------------
 
-# URL of your local Ollama server (default: http://localhost:11434)
-OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+def _normalize_ollama_host(raw_host: str) -> str:
+    """Normalize Ollama host and auto-fix common local misconfiguration."""
+    candidate = (raw_host or "").strip() or "http://localhost:11434"
+    if "://" not in candidate:
+        candidate = f"http://{candidate}"
+
+    parsed = urlparse(candidate)
+    scheme = parsed.scheme or "http"
+    hostname = parsed.hostname or "localhost"
+    port = parsed.port
+    path = parsed.path if parsed.path not in ("", "/") else ""
+
+    # 0.0.0.0 is valid for server bind, but not for client connect.
+    if hostname == "0.0.0.0":
+        hostname = "localhost"
+
+    netloc = hostname
+    if port:
+        netloc = f"{netloc}:{port}"
+
+    return urlunparse((scheme, netloc, path, "", "", ""))
+
+
+# URL of your local Ollama server (default: http://localhost:11434).
+# If configured as 0.0.0.0:11434, it is auto-corrected to localhost.
+OLLAMA_HOST_CONFIGURED = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+OLLAMA_HOST = _normalize_ollama_host(OLLAMA_HOST_CONFIGURED)
 
 # Model to use for both search-term generation and video rating.
 # Must support vision (image input) for thumbnail analysis.
@@ -182,8 +208,15 @@ def _configure_ollama() -> ollama_lib.Client:
     try:
         client.list()
     except Exception as exc:
+        normalization_note = ""
+        if OLLAMA_HOST_CONFIGURED != OLLAMA_HOST:
+            normalization_note = (
+                f"\nConfigured OLLAMA_HOST was '{OLLAMA_HOST_CONFIGURED}' "
+                f"(auto-normalized to '{OLLAMA_HOST}')."
+            )
         raise RuntimeError(
             f"Cannot connect to Ollama at {OLLAMA_HOST}. "
+            f"{normalization_note}"
             f"Make sure Ollama is installed and running:\n"
             f"  https://ollama.com/download\n"
             f"  ollama serve\n"
@@ -221,11 +254,54 @@ def _fetch_thumbnail(url: str) -> Image.Image | None:
         return None
 
 
+def _sample_evenly(items: list[str], max_count: int) -> list[str]:
+    if len(items) <= max_count:
+        return items
+
+    if max_count <= 1:
+        return [items[0]]
+
+    idxs = []
+    for i in range(max_count):
+        idx = round(i * (len(items) - 1) / (max_count - 1))
+        if idx not in idxs:
+            idxs.append(idx)
+    return [items[i] for i in idxs]
+
+
+def _get_video_context(video_id: str) -> tuple[list[str], str]:
+    """
+    Fetch richer metadata for a specific video and return:
+      - image URLs sampled across available video images/thumbnails
+      - best available description text
+    """
+    url = f"https://www.youtube.com/watch?v={video_id}"
+    ydl_opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "skip_download": True,
+    }
+
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False) or {}
+    except Exception:
+        return [], ""
+
+    image_urls: list[str] = []
+    for item in info.get("thumbnails") or []:
+        image_url = item.get("url")
+        if image_url and image_url not in image_urls:
+            image_urls.append(image_url)
+
+    return _sample_evenly(image_urls, max_count=4), info.get("description") or ""
+
+
 def _rate_video(
     client: ollama_lib.Client,
     video_id: str,
     title: str,
-    thumbnail_url: str,
+    image_urls: list[str],
     description: str,
 ) -> tuple[int, int] | tuple[None, None]:
     """Return (dance_energy, cuteness) both 1-5, or (None, None) on failure."""
@@ -242,17 +318,21 @@ def _rate_video(
         "Use integer values only."
     )
 
-    img = _fetch_thumbnail(thumbnail_url)
-
     try:
-        if img:
+        image_bytes_list: list[bytes] = []
+        for image_url in image_urls:
+            img = _fetch_thumbnail(image_url)
+            if not img:
+                continue
             buf = BytesIO()
             img.save(buf, format="JPEG")
-            image_bytes = buf.getvalue()
+            image_bytes_list.append(buf.getvalue())
+
+        if image_bytes_list:
             response = client.generate(
                 model=OLLAMA_MODEL,
                 prompt=base_prompt,
-                images=[image_bytes],
+                images=image_bytes_list,
             )
         else:
             response = client.generate(model=OLLAMA_MODEL, prompt=base_prompt)
@@ -355,6 +435,13 @@ def _search_and_rate():
             )
             channel = entry.get("uploader") or entry.get("channel", "Unknown")
             description = entry.get("description") or ""
+            context_images, rich_description = _get_video_context(video_id)
+            if rich_description:
+                description = rich_description
+            if not context_images and thumbnail:
+                context_images = [thumbnail]
+            if context_images:
+                thumbnail = context_images[0]
 
             broadcast(
                 {
@@ -364,7 +451,7 @@ def _search_and_rate():
             )
 
             dance_energy, cuteness = _rate_video(
-                client, video_id, title, thumbnail, description
+                client, video_id, title, context_images, description
             )
             if dance_energy is None:
                 broadcast(

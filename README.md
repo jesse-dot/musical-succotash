@@ -4,7 +4,7 @@ A Python + Flask web app that runs **100% locally — no cloud AI keys required*
 
 1. **Generates search terms** using a local Ollama model
 2. **Finds YouTube videos** of Kemono fursuiters dancing via yt-dlp
-3. **AI-rates each video** locally (scoring *Dance Energy* and *Cuteness* from 1–5 using the video thumbnail + metadata)
+3. **AI-rates each video** locally (scoring *Dance Energy* and *Cuteness* from 1–5 using multiple video-derived images + metadata)
 4. **Streams results live** to a responsive web UI using Server-Sent Events — each card appears the moment its ratings are ready
 
 Designed to run on low-power hardware — the default model (**moondream**, 1.7B params, ~1.1 GB) runs comfortably on a **Raspberry Pi 4** (4 GB RAM).
@@ -76,7 +76,7 @@ All settings are optional — the defaults work out of the box.
 
 | Variable | Default | Description |
 |---|---|---|
-| `OLLAMA_HOST` | `http://localhost:11434` | Ollama server URL |
+| `OLLAMA_HOST` | `http://localhost:11434` | Ollama server URL (`0.0.0.0` is auto-corrected to `localhost`) |
 | `OLLAMA_MODEL` | `moondream` | Model for search terms + rating |
 
 ### Choosing a model
