@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>🐾 Kemono Fursuiter Dance Rater</title>
+  <style>
+    /* ── Reset & base ───────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: linear-gradient(135deg, #1a0533 0%, #0d1b4b 50%, #0d2e2e 100%);
+      min-height: 100vh;
+      color: #f0e6ff;
+    }
+
+    /* ── Header ─────────────────────────────────── */
+    header {
+      text-align: center;
+      padding: 2.5rem 1rem 1.5rem;
+      background: rgba(255,255,255,0.04);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+    }
+    header h1 {
+      font-size: clamp(1.6rem, 4vw, 2.8rem);
+      background: linear-gradient(90deg, #ff8de8, #a78bfa, #67e8f9);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      font-weight: 800;
+      letter-spacing: -0.5px;
+    }
+    header p.subtitle {
+      margin-top: 0.4rem;
+      font-size: 0.95rem;
+      color: rgba(255,255,255,0.55);
+    }
+
+    /* ── Controls ───────────────────────────────── */
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      flex-wrap: wrap;
+      justify-content: center;
+      padding: 1.2rem 1rem;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+    }
+    #startBtn {
+      padding: 0.65rem 2rem;
+      border: none;
+      border-radius: 999px;
+      background: linear-gradient(135deg, #c026d3, #7c3aed);
+      color: #fff;
+      font-size: 1rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: opacity 0.2s, transform 0.1s;
+    }
+    #startBtn:hover:not(:disabled) { opacity: 0.88; transform: scale(1.03); }
+    #startBtn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    #statusBadge {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      background: rgba(255,255,255,0.07);
+      border-radius: 999px;
+      padding: 0.4rem 1rem;
+      font-size: 0.85rem;
+      color: rgba(255,255,255,0.75);
+      max-width: 520px;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+    #statusBadge .dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: #4ade80;
+      flex-shrink: 0;
+    }
+    #statusBadge .dot.idle { background: #6b7280; }
+    #statusBadge .dot.busy {
+      background: #facc15;
+      animation: pulse 1s infinite;
+    }
+    #statusBadge .dot.done { background: #4ade80; }
+    #statusBadge .dot.error { background: #f87171; }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+
+    #videoCount {
+      font-size: 0.85rem;
+      color: rgba(255,255,255,0.45);
+    }
+
+    /* ── Grid ───────────────────────────────────── */
+    #grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(310px, 1fr));
+      gap: 1.4rem;
+      padding: 1.8rem 1.6rem 4rem;
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    /* ── Card ───────────────────────────────────── */
+    .card {
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 16px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      transition: transform 0.2s, box-shadow 0.2s;
+      animation: fadeSlideIn 0.45s ease both;
+    }
+    .card:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 12px 40px rgba(124,58,237,0.35);
+    }
+    @keyframes fadeSlideIn {
+      from { opacity: 0; transform: translateY(24px) scale(0.97); }
+      to   { opacity: 1; transform: translateY(0)   scale(1); }
+    }
+
+    .card-thumb {
+      position: relative;
+      width: 100%;
+      padding-top: 56.25%; /* 16:9 */
+      background: #111;
+      overflow: hidden;
+      cursor: pointer;
+    }
+    .card-thumb img {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transition: opacity 0.2s;
+    }
+    .card-thumb iframe {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      border: none;
+    }
+    .play-overlay {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0,0,0,0.25);
+      transition: background 0.2s;
+    }
+    .play-overlay svg {
+      width: 52px; height: 52px;
+      filter: drop-shadow(0 2px 6px rgba(0,0,0,0.5));
+      transition: transform 0.15s;
+    }
+    .card-thumb:hover .play-overlay { background: rgba(0,0,0,0.1); }
+    .card-thumb:hover .play-overlay svg { transform: scale(1.12); }
+
+    .card-body {
+      padding: 0.9rem 1rem 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      flex: 1;
+    }
+
+    .card-title {
+      font-size: 0.92rem;
+      font-weight: 600;
+      line-height: 1.35;
+      color: #f0e6ff;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .card-channel {
+      font-size: 0.78rem;
+      color: rgba(255,255,255,0.4);
+    }
+
+    .ratings {
+      display: flex;
+      gap: 0.6rem;
+      margin-top: auto;
+      padding-top: 0.5rem;
+      flex-wrap: wrap;
+    }
+    .rating-pill {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      background: rgba(255,255,255,0.07);
+      border-radius: 12px;
+      padding: 0.45rem 0.8rem;
+      flex: 1;
+      min-width: 110px;
+    }
+    .rating-label {
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: rgba(255,255,255,0.45);
+      margin-bottom: 0.25rem;
+    }
+    .stars {
+      font-size: 1.1rem;
+      line-height: 1;
+    }
+    .star-filled { color: #facc15; }
+    .star-empty  { color: rgba(255,255,255,0.15); }
+
+    /* score color by value */
+    [data-score="1"] .stars { filter: hue-rotate(0deg); }
+    [data-score="2"] .stars { filter: hue-rotate(10deg); }
+    [data-score="3"] .stars { filter: hue-rotate(30deg); }
+    [data-score="4"] .stars { filter: hue-rotate(55deg); }
+    [data-score="5"] .stars { filter: hue-rotate(80deg); }
+
+    /* ── Empty / loading states ─────────────────── */
+    #emptyState {
+      grid-column: 1 / -1;
+      text-align: center;
+      padding: 4rem 1rem;
+      color: rgba(255,255,255,0.3);
+      font-size: 1rem;
+    }
+    #emptyState span { font-size: 3rem; display: block; margin-bottom: 0.8rem; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>🐾 Kemono Fursuiter Dance Rater</h1>
+  <p class="subtitle">AI-powered search &amp; rating • Dance Energy &amp; Cuteness scored 1–5 by Gemini</p>
+</header>
+
+<div class="controls">
+  <button id="startBtn" onclick="startSearch()">▶ Find &amp; Rate Videos</button>
+  <div id="statusBadge">
+    <span class="dot idle" id="statusDot"></span>
+    <span id="statusText">Ready — click the button to start!</span>
+  </div>
+  <span id="videoCount">0 videos</span>
+</div>
+
+<div id="grid">
+  <div id="emptyState">
+    <span>🐾</span>
+    No videos yet. Press <strong>Find &amp; Rate Videos</strong> to get started!
+  </div>
+</div>
+
+<script>
+  /* ── Helpers ───────────────────────────────────── */
+  function stars(score) {
+    const filled = '★'.repeat(score);
+    const empty  = '☆'.repeat(5 - score);
+    return `<span class="star-filled">${filled}</span><span class="star-empty">${empty}</span>`;
+  }
+
+  function setStatus(msg, state = 'busy') {
+    document.getElementById('statusText').textContent = msg;
+    const dot = document.getElementById('statusDot');
+    dot.className = `dot ${state}`;
+  }
+
+  function updateCount(n) {
+    document.getElementById('videoCount').textContent = `${n} video${n !== 1 ? 's' : ''}`;
+  }
+
+  /* ── Card builder ──────────────────────────────── */
+  function buildCard(v) {
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.id = `card-${v.id}`;
+
+    const embedUrl = `https://www.youtube-nocookie.com/embed/${v.id}?autoplay=1&rel=0`;
+
+    card.innerHTML = `
+      <div class="card-thumb" id="thumb-${v.id}" onclick="loadPlayer('${v.id}','${escapeAttr(embedUrl)}')">
+        <img src="${escapeAttr(v.thumbnail)}" alt="${escapeAttr(v.title)}" loading="lazy" />
+        <div class="play-overlay">
+          <svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="32" cy="32" r="32" fill="rgba(255,255,255,0.85)"/>
+            <polygon points="26,20 50,32 26,44" fill="#7c3aed"/>
+          </svg>
+        </div>
+      </div>
+      <div class="card-body">
+        <p class="card-title"><a href="${escapeAttr(v.url)}" target="_blank" rel="noopener"
+           style="color:inherit;text-decoration:none;">${escapeHtml(v.title)}</a></p>
+        <p class="card-channel">${escapeHtml(v.channel || 'Unknown channel')}</p>
+        <div class="ratings">
+          <div class="rating-pill" data-score="${v.dance_energy}">
+            <span class="rating-label">⚡ Dance Energy</span>
+            <span class="stars">${stars(v.dance_energy)}</span>
+          </div>
+          <div class="rating-pill" data-score="${v.cuteness}">
+            <span class="rating-label">💖 Cuteness</span>
+            <span class="stars">${stars(v.cuteness)}</span>
+          </div>
+        </div>
+      </div>
+    `;
+    return card;
+  }
+
+  function loadPlayer(videoId, embedUrl) {
+    const thumb = document.getElementById(`thumb-${videoId}`);
+    if (!thumb || thumb.querySelector('iframe')) return;
+    const iframe = document.createElement('iframe');
+    iframe.src = embedUrl;
+    iframe.allow = 'autoplay; encrypted-media; picture-in-picture';
+    iframe.allowFullscreen = true;
+    thumb.innerHTML = '';
+    thumb.appendChild(iframe);
+  }
+
+  function escapeHtml(s) {
+    return String(s)
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  }
+  function escapeAttr(s) { return escapeHtml(s); }
+
+  /* ── On-load: fetch existing videos ───────────── */
+  let videoCount = 0;
+
+  async function loadExisting() {
+    const res = await fetch('/api/videos');
+    const videos = await res.json();
+    const grid = document.getElementById('grid');
+    if (videos.length) {
+      document.getElementById('emptyState')?.remove();
+    }
+    videos.forEach(v => {
+      if (!document.getElementById(`card-${v.id}`)) {
+        grid.appendChild(buildCard(v));
+        videoCount++;
+      }
+    });
+    updateCount(videoCount);
+  }
+
+  loadExisting();
+
+  /* ── Start search ──────────────────────────────── */
+  async function startSearch() {
+    const btn = document.getElementById('startBtn');
+    btn.disabled = true;
+    setStatus('Starting…', 'busy');
+
+    await fetch('/api/start', { method: 'POST' });
+    connectSSE();
+  }
+
+  /* ── SSE ───────────────────────────────────────── */
+  let evtSource = null;
+
+  function connectSSE() {
+    if (evtSource) { evtSource.close(); }
+    evtSource = new EventSource('/api/stream');
+
+    evtSource.onmessage = (e) => {
+      const data = JSON.parse(e.data);
+
+      if (data.type === 'new_video') {
+        const grid = document.getElementById('grid');
+        document.getElementById('emptyState')?.remove();
+        if (!document.getElementById(`card-${data.video.id}`)) {
+          // Prepend so newest appears first
+          grid.insertBefore(buildCard(data.video), grid.firstChild);
+          videoCount++;
+          updateCount(videoCount);
+        }
+      } else if (data.type === 'status') {
+        setStatus(data.message, 'busy');
+      } else if (data.type === 'done') {
+        setStatus(data.message, 'done');
+        document.getElementById('startBtn').disabled = false;
+        evtSource.close();
+        evtSource = null;
+      } else if (data.type === 'error') {
+        setStatus('Error: ' + data.message, 'error');
+        document.getElementById('startBtn').disabled = false;
+      }
+    };
+
+    evtSource.onerror = () => {
+      setStatus('Connection lost — you can try again.', 'idle');
+      document.getElementById('startBtn').disabled = false;
+    };
+  }
+
+  /* Re-connect SSE if a run is already in progress when the page loads */
+  fetch('/api/status').then(r => r.json()).then(s => {
+    if (s.running) {
+      document.getElementById('startBtn').disabled = true;
+      setStatus('A search is already running…', 'busy');
+      connectSSE();
+    }
+  });
+</script>
+</body>
+</html>
