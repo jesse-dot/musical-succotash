@@ -259,6 +259,7 @@ def _fetch_thumbnail(url: str) -> Image.Image | None:
 
 
 def _sample_evenly(items: list[str], max_count: int) -> list[str]:
+    """Return up to `max_count` items spaced across the full input list."""
     if len(items) <= max_count:
         return items
 
@@ -266,6 +267,7 @@ def _sample_evenly(items: list[str], max_count: int) -> list[str]:
         return [items[0]]
 
     return [
+        # Evenly-spaced index formula that includes first and last positions.
         items[i * (len(items) - 1) // (max_count - 1)]
         for i in range(max_count)
     ]
