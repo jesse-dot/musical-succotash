@@ -64,6 +64,8 @@ OLLAMA_HOST = _normalize_ollama_host(OLLAMA_HOST_CONFIGURED)
 # Pull the model first:  ollama pull moondream
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "moondream")
 # Maximum number of video-derived images provided to the model for rating context.
+# 4 keeps inference reasonably fast on low-power devices (e.g. Raspberry Pi)
+# while still giving the model more temporal context than a single thumbnail.
 MAX_CONTEXT_IMAGES = 4
 
 app = Flask(__name__)
@@ -263,11 +265,10 @@ def _sample_evenly(items: list[str], max_count: int) -> list[str]:
     if max_count <= 1:
         return [items[0]]
 
-    idxs = []
-    for i in range(max_count):
-        idx = i * (len(items) - 1) // (max_count - 1)
-        idxs.append(idx)
-    return [items[i] for i in idxs]
+    return [
+        items[i * (len(items) - 1) // (max_count - 1)]
+        for i in range(max_count)
+    ]
 
 
 def _get_video_context(
@@ -293,9 +294,11 @@ def _get_video_context(
         return [], ""
 
     image_urls: list[str] = []
+    seen_urls: set[str] = set()
     for item in info.get("thumbnails") or []:
         image_url = item.get("url")
-        if image_url and image_url not in image_urls:
+        if image_url and image_url not in seen_urls:
+            seen_urls.add(image_url)
             image_urls.append(image_url)
 
     return _sample_evenly(image_urls, max_count=max_images), info.get("description") or ""
