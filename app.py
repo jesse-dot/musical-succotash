@@ -1,7 +1,8 @@
 """
 Kemono Fursuiter Dance Rater
-Searches YouTube for kemono fursuiter dancing videos, rates them with Gemini AI
-(Dance Energy 1-5 and Cuteness 1-5), and streams results live to a web UI.
+Searches YouTube for kemono fursuiter dancing videos, rates them with a local
+Ollama AI model (Dance Energy 1-5 and Cuteness 1-5), and streams results live
+to a web UI.  No cloud AI keys required — everything runs on your machine.
 """
 
 import json
@@ -13,8 +14,7 @@ import threading
 import time
 from io import BytesIO
 
-import google.genai as genai
-from google.genai import types as genai_types
+import ollama as ollama_lib
 import requests
 import yt_dlp
 from dotenv import load_dotenv
@@ -22,6 +22,21 @@ from flask import Flask, Response, jsonify, render_template
 from PIL import Image
 
 load_dotenv()
+
+# ---------------------------------------------------------------------------
+# Ollama configuration (override via environment variables or .env)
+# ---------------------------------------------------------------------------
+
+# URL of your local Ollama server (default: http://localhost:11434)
+OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+
+# Model to use for both search-term generation and video rating.
+# Must support vision (image input) for thumbnail analysis.
+# Default: moondream — a tiny 1.7B vision model (~1.1 GB) that runs on
+# Raspberry Pi 4 (4 GB RAM) and other low-power devices.
+# Other options: llava:7b, llama3.2-vision (require more RAM)
+# Pull the model first:  ollama pull moondream
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "moondream")
 
 app = Flask(__name__)
 
@@ -161,17 +176,24 @@ def api_status():
 # ---------------------------------------------------------------------------
 
 
-def _configure_gemini() -> genai.Client:
-    api_key = os.environ.get("GEMINI_API_KEY", "")
-    if not api_key:
+def _configure_ollama() -> ollama_lib.Client:
+    """Create an Ollama client and verify the server is reachable."""
+    client = ollama_lib.Client(host=OLLAMA_HOST)
+    try:
+        client.list()
+    except Exception as exc:
         raise RuntimeError(
-            "GEMINI_API_KEY is not set. "
-            "Add it to a .env file or export it as an environment variable."
+            f"Cannot connect to Ollama at {OLLAMA_HOST}. "
+            f"Make sure Ollama is installed and running:\n"
+            f"  https://ollama.com/download\n"
+            f"  ollama serve\n"
+            f"  ollama pull {OLLAMA_MODEL}\n"
+            f"Error: {exc}"
         )
-    return genai.Client(api_key=api_key)
+    return client
 
 
-def _generate_search_terms(client: genai.Client) -> list[str]:
+def _generate_search_terms(client: ollama_lib.Client) -> list[str]:
     prompt = (
         "Generate 6 different YouTube search query strings to find videos of "
         "kemono fursuiters dancing. Kemono fursuits are Japanese-style cute "
@@ -180,13 +202,11 @@ def _generate_search_terms(client: genai.Client) -> list[str]:
         "Return ONLY the search terms, one per line, with no numbering, "
         "no bullets, and no extra text."
     )
-    response = client.models.generate_content(
-        model="gemini-2.0-flash",
-        contents=prompt,
-    )
+    response = client.generate(model=OLLAMA_MODEL, prompt=prompt)
+    reply_text = response.response  # GenerateResponse.response holds the text
     terms = [
         line.strip()
-        for line in response.text.strip().splitlines()
+        for line in reply_text.strip().splitlines()
         if line.strip()
     ]
     return terms[:6]  # Safety cap
@@ -202,7 +222,7 @@ def _fetch_thumbnail(url: str) -> Image.Image | None:
 
 
 def _rate_video(
-    client: genai.Client,
+    client: ollama_lib.Client,
     video_id: str,
     title: str,
     thumbnail_url: str,
@@ -226,24 +246,19 @@ def _rate_video(
 
     try:
         if img:
-            # Convert PIL image to bytes for the new SDK
             buf = BytesIO()
             img.save(buf, format="JPEG")
             image_bytes = buf.getvalue()
-            contents = [
-                genai_types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
-                base_prompt,
-            ]
+            response = client.generate(
+                model=OLLAMA_MODEL,
+                prompt=base_prompt,
+                images=[image_bytes],
+            )
         else:
-            contents = base_prompt
+            response = client.generate(model=OLLAMA_MODEL, prompt=base_prompt)
 
-        response = client.models.generate_content(
-            model="gemini-2.0-flash",
-            contents=contents,
-        )
-
-        text = response.text.strip()
-        match = re.search(r"\{[^}]+\}", text, re.DOTALL)
+        reply_text = response.response  # GenerateResponse.response holds the text
+        match = re.search(r"\{[^}]+\}", reply_text.strip(), re.DOTALL)
         if match:
             data = json.loads(match.group())
             dance_energy = max(1, min(5, int(data.get("dance_energy", 3))))
@@ -280,12 +295,12 @@ def _save_video(video: dict):
 def _search_and_rate():
     """Main background task: generate terms → search → rate → broadcast."""
     try:
-        client = _configure_gemini()
+        client = _configure_ollama()
     except RuntimeError as exc:
         broadcast({"type": "error", "message": str(exc)})
         return
 
-    broadcast({"type": "status", "message": "Asking Gemini for search terms…"})
+    broadcast({"type": "status", "message": f"Asking {OLLAMA_MODEL} for search terms…"})
 
     try:
         search_terms = _generate_search_terms(client)
@@ -373,7 +388,7 @@ def _search_and_rate():
             _save_video(video)
             broadcast({"type": "new_video", "video": video})
 
-            # Small pause to avoid hammering Gemini API
+            # Small pause to avoid overwhelming a low-power Ollama server
             time.sleep(1.5)
 
     broadcast({"type": "done", "message": "All videos rated!"})
